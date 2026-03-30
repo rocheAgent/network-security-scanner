@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🛡️ Network Security Scanner</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --orange: #d29922;
+    --yellow: #e3b341;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --critical: #ff4444;
+    --high: #f85149;
+    --medium: #d29922;
+    --low: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+  }
+  header h1 { font-size: 1.7rem; color: #fff; }
+  header p  { color: var(--muted); font-size: 0.9rem; margin-top: 4px; }
+  .shield { font-size: 2.5rem; }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  input[type=text] {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    width: 240px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  input[type=text]:focus { border-color: var(--accent); }
+
+  .btn {
+    padding: 10px 24px;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-scan {
+    background: var(--accent);
+    color: #0d1117;
+  }
+  .btn-scan:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-export {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .spinner {
+    width: 18px; height: 18px;
+    border: 3px solid #0d111788;
+    border-top-color: #0d1117;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .scanning .spinner { display: block; }
+
+  #status-bar {
+    font-size: 0.85rem;
+    color: var(--muted);
+    padding: 6px 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: none;
+  }
+
+  /* Summary cards */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat-card .num { font-size: 2rem; font-weight: 700; }
+  .stat-card .lbl { font-size: 0.78rem; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: .05em; }
+  .num-open    { color: var(--accent); }
+  .num-critical{ color: var(--critical); }
+  .num-high    { color: var(--high); }
+  .num-medium  { color: var(--yellow); }
+  .num-fw-on   { color: var(--green); }
+  .num-fw-off  { color: var(--red); }
+
+  /* Sections */
+  .section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .section-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .section-header:hover { background: #1c2128; }
+  .section-header .toggle { margin-left: auto; color: var(--muted); font-size: 0.8rem; }
+  .section-body { padding: 16px 20px; }
+  .section-body.hidden { display: none; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th { color: var(--muted); text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; }
+  td { padding: 9px 12px; border-bottom: 1px solid #21262d; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1c2128; }
+
+  /* Risk badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .badge-critical { background: #ff444422; color: var(--critical); border: 1px solid #ff444444; }
+  .badge-high     { background: #f8514922; color: var(--high);     border: 1px solid #f8514944; }
+  .badge-medium   { background: #d2992222; color: var(--yellow);   border: 1px solid #d2992244; }
+  .badge-low      { background: #58a6ff22; color: var(--low);      border: 1px solid #58a6ff44; }
+  .badge-none     { background: #8b949e22; color: var(--muted);    border: 1px solid #8b949e44; }
+
+  /* Port status dots */
+  .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+  .dot-open   { background: var(--red); box-shadow: 0 0 6px var(--red); }
+  .dot-closed { background: var(--muted); }
+
+  /* Firewall */
+  .fw-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 0;
+  }
+  .fw-icon { font-size: 2rem; }
+  .fw-label { font-size: 1.1rem; font-weight: 600; }
+  .fw-sub   { color: var(--muted); font-size: 0.85rem; }
+  .fw-on  .fw-label { color: var(--green); }
+  .fw-off .fw-label { color: var(--red); }
+
+  pre.fw-details {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 0.8rem;
+    color: var(--muted);
+    overflow-x: auto;
+    margin-top: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  /* Iface grid */
+  .iface-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .iface-card {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .iface-name { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .iface-row  { font-size: 0.82rem; color: var(--muted); margin-top: 3px; }
+  .iface-row span { color: var(--text); }
+  .up-dot   { width:9px; height:9px; border-radius:50%; background:var(--green); display:inline-block; }
+  .down-dot { width:9px; height:9px; border-radius:50%; background:var(--muted); display:inline-block; }
+
+  /* Info row */
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .info-item { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .info-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .info-value { font-size: 0.95rem; margin-top: 4px; }
+
+  /* Empty state */
+  .empty { color: var(--muted); text-align: center; padding: 32px; font-size: 0.9rem; }
+
+  /* Timestamp */
+  #last-scan { color: var(--muted); font-size: 0.82rem; margin-top: -20px; margin-bottom: 24px; }
+
+  /* Alert banner */
+  .alert {
+    padding: 12px 18px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 0.88rem;
+    display: none;
+  }
+  .alert-error { background: #f8514922; border: 1px solid var(--red); color: #f85149; }
+  .alert-warn  { background: #d2992222; border: 1px solid var(--yellow); color: var(--yellow); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="shield">🛡️</div>
+  <div>
+    <h1>Network Security Scanner</h1>
+    <p>Escaneo de puertos, firewall y seguridad de red en tiempo real</p>
+  </div>
+</header>
+
+<div class="controls">
+  <input type="text" id="target" value="127.0.0.1" placeholder="IP objetivo (ej: 127.0.0.1)">
+  <button class="btn btn-scan" id="btn-scan" onclick="runScan()">
+    <span class="spinner" id="spinner"></span>
+    <span id="btn-text">🔍 Escanear</span>
+  </button>
+  <button class="btn btn-export" onclick="exportJSON()">📥 Exportar JSON</button>
+  <div id="status-bar"></div>
+</div>
+
+<div class="alert alert-error" id="err-banner"></div>
+<div class="alert alert-warn"  id="warn-banner"></div>
+
+<div id="last-scan"></div>
+<div class="summary-grid" id="summary-grid"></div>
+
+<!-- Firewall -->
+<div class="section" id="sec-firewall" style="display:none">
+  <div class="section-header" onclick="toggleSection('firewall')">
+    🔥 Estado del Firewall <span class="toggle" id="tog-firewall">▼</span>
+  </div>
+  <div class="section-body" id="body-firewall"></div>
+</div>
+
+<!-- Ports -->
+<div class="section" id="sec-ports" style="display:none">
+  <div class="section-header" onclick="toggleSection('ports')">
+    🔌 Puertos Escaneados <span class="toggle" id="tog-ports">▼</span>
+  </div>
+  <div class="section-body" id="body-ports"></div>
+</div>
+
+<!-- Connections -->
+<div class="section" id="sec-conns" style="display:none">
+  <div class="section-header" onclick="toggleSection('conns')">
+    🌐 Conexiones Activas <span class="toggle" id="tog-conns">▼</span>
+  </div>
+  <div class="section-body" id="body-conns"></div>
+</div>
+
+<!-- Interfaces -->
+<div class="section" id="sec-ifaces" style="display:none">
+  <div class="section-header" onclick="toggleSection('ifaces')">
+    🖧 Interfaces de Red <span class="toggle" id="tog-ifaces">▼</span>
+  </div>
+  <div class="section-body" id="body-ifaces"></div>
+</div>
+
+<!-- System -->
+<div class="section" id="sec-system" style="display:none">
+  <div class="section-header" onclick="toggleSection('system')">
+    💻 Información del Sistema <span class="toggle" id="tog-system">▼</span>
+  </div>
+  <div class="section-body" id="body-system"></div>
+</div>
+
+<script>
+let lastData = null;
+const collapsed = {};
+
+function toggleSection(name) {
+  collapsed[name] = !collapsed[name];
+  document.getElementById(`body-${name}`).classList.toggle('hidden', collapsed[name]);
+  document.getElementById(`tog-${name}`).textContent = collapsed[name] ? '▶' : '▼';
+}
+
+function setStatus(msg) {
+  const el = document.getElementById('status-bar');
+  el.style.display = msg ? 'block' : 'none';
+  el.textContent = msg;
+}
+
+function showError(msg) {
+  const el = document.getElementById('err-banner');
+  el.textContent = '❌ ' + msg;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 8000);
+}
+
+function badge(risk) {
+  return `<span class="badge badge-${risk}">${risk}</span>`;
+}
+
+function renderSummary(d) {
+  const fw = d.firewall;
+  const s  = d.summary;
+  document.getElementById('last-scan').textContent =
+    `⏱ Último escaneo: ${new Date(d.timestamp).toLocaleString()} — objetivo: ${d.target} — duración: ${d.duration_s}s`;
+
+  document.getElementById('summary-grid').innerHTML = `
+    <div class="stat-card"><div class="num num-open">${s.open_ports}</div><div class="lbl">Puertos Abiertos</div></div>
+    <div class="stat-card"><div class="num num-critical">${s.critical}</div><div class="lbl">Críticos</div></div>
+    <div class="stat-card"><div class="num num-high">${s.high}</div><div class="lbl">Alto Riesgo</div></div>
+    <div class="stat-card"><div class="num num-medium">${s.medium}</div><div class="lbl">Riesgo Medio</div></div>
+    <div class="stat-card">
+      <div class="num ${fw.active ? 'num-fw-on' : 'num-fw-off'}">${fw.active ? '✅' : '❌'}</div>
+      <div class="lbl">Firewall</div>
+    </div>
+    <div class="stat-card"><div class="num" style="color:var(--accent)">${d.connections.length}</div><div class="lbl">Conexiones</div></div>
+  `;
+
+  // Warn if no firewall
+  const wb = document.getElementById('warn-banner');
+  if (!fw.active) {
+    wb.textContent = '⚠️ Firewall inactivo — tu sistema está expuesto. Activa UFW con: sudo ufw enable';
+    wb.style.display = 'block';
+  } else {
+    wb.style.display = 'none';
+  }
+}
+
+function renderFirewall(d) {
+  const fw = d.firewall;
+  const cls = fw.active ? 'fw-on' : 'fw-off';
+  const icon = fw.active ? '🔒' : '🔓';
+  const label = fw.active ? 'ACTIVO' : 'INACTIVO';
+  document.getElementById('body-firewall').innerHTML = `
+    <div class="fw-status ${cls}">
+      <div class="fw-icon">${icon}</div>
+      <div>
+        <div class="fw-label">${label}</div>
+        <div class="fw-sub">${fw.name}</div>
+      </div>
+    </div>
+    ${fw.details.length ? `<pre class="fw-details">${fw.details.join('\n')}</pre>` : ''}
+  `;
+}
+
+function renderPorts(d) {
+  const open   = d.ports.filter(p => p.open);
+  const closed = d.ports.filter(p => !p.open);
+  let html = `<table>
+    <thead><tr><th>Puerto</th><th>Servicio</th><th>Estado</th><th>Riesgo</th></tr></thead><tbody>`;
+  // Open ports first
+  for (const p of open) {
+    html += `<tr>
+      <td><strong>${p.port}</strong></td>
+      <td>${p.service}</td>
+      <td><span class="dot dot-open"></span> Abierto</td>
+      <td>${badge(p.risk)}</td>
+    </tr>`;
+  }
+  for (const p of closed) {
+    html += `<tr>
+      <td style="color:var(--muted)">${p.port}</td>
+      <td style="color:var(--muted)">${p.service}</td>
+      <td><span class="dot dot-closed"></span><span style="color:var(--muted)">Cerrado</span></td>
+      <td>${badge('none')}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('body-ports').innerHTML = html;
+}
+
+function renderConnections(d) {
+  if (!d.connections.length) {
+    document.getElementById('body-conns').innerHTML = '<div class="empty">No hay conexiones establecidas</div>';
+    return;
+  }
+  let html = `<table>
+    <thead><tr><th>Local</th><th>Remoto</th><th>Estado</th><th>PID</th><th>Proceso</th></tr></thead><tbody>`;
+  for (const c of d.connections) {
+    html += `<tr>
+      <td><code>${c.local}</code></td>
+      <td><code>${c.remote}</code></td>
+      <td><span class="badge badge-low">${c.status}</span></td>
+      <td style="color:var(--muted)">${c.pid ?? '—'}</td>
+      <td>${c.process}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('body-conns').innerHTML = html;
+}
+
+function renderInterfaces(d) {
+  let html = '<div class="iface-grid">';
+  for (const iface of d.interfaces) {
+    const dot = iface.up ? '<span class="up-dot"></span>' : '<span class="down-dot"></span>';
+    html += `<div class="iface-card">
+      <div class="iface-name">${dot} ${iface.name}</div>
+      ${iface.ipv4 ? `<div class="iface-row">IPv4: <span>${iface.ipv4}</span></div>` : ''}
+      ${iface.ipv6 ? `<div class="iface-row">IPv6: <span style="font-size:.78rem">${iface.ipv6}</span></div>` : ''}
+      <div class="iface-row">Estado: <span>${iface.up ? '✅ Activa' : '❌ Inactiva'}</span></div>
+      ${iface.speed ? `<div class="iface-row">Velocidad: <span>${iface.speed} Mbps</span></div>` : ''}
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('body-ifaces').innerHTML = html;
+}
+
+function renderSystem(d) {
+  const s = d.system;
+  document.getElementById('body-system').innerHTML = `
+    <div class="info-grid">
+      <div class="info-item"><div class="info-label">Hostname</div><div class="info-value">${s.hostname}</div></div>
+      <div class="info-item"><div class="info-label">Sistema Operativo</div><div class="info-value">${s.os}</div></div>
+      <div class="info-item"><div class="info-label">Arquitectura</div><div class="info-value">${s.arch}</div></div>
+      <div class="info-item"><div class="info-label">CPUs</div><div class="info-value">${s.cpu_count}</div></div>
+      <div class="info-item"><div class="info-label">RAM Total</div><div class="info-value">${s.ram_gb} GB</div></div>
+    </div>`;
+}
+
+function render(data) {
+  lastData = data;
+  ['firewall','ports','conns','ifaces','system'].forEach(s =>
+    document.getElementById(`sec-${s}`).style.display = 'block');
+
+  renderSummary(data);
+  renderFirewall(data);
+  renderPorts(data);
+  renderConnections(data);
+  renderInterfaces(data);
+  renderSystem(data);
+}
+
+async function runScan() {
+  const btn = document.getElementById('btn-scan');
+  const target = document.getElementById('target').value.trim() || '127.0.0.1';
+  btn.disabled = true;
+  btn.classList.add('scanning');
+  document.getElementById('btn-text').textContent = 'Escaneando…';
+  document.getElementById('err-banner').style.display = 'none';
+  setStatus(`Escaneando ${target}… esto puede tomar unos segundos`);
+
+  try {
+    const resp = await fetch('/api/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({target})
+    });
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error || 'Error desconocido');
+    render(json.data);
+    setStatus('');
+  } catch(e) {
+    showError(e.message);
+    setStatus('');
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('scanning');
+    document.getElementById('btn-text').textContent = '🔍 Escanear';
+  }
+}
+
+// Auto-scan on load
+window.addEventListener('load', runScan);
+</script>
+</body>
+</html>
