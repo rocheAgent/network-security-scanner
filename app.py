@@ -7,7 +7,7 @@ Open: http://localhost:5000
 import json
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from scanner import full_scan
+from scanner import full_scan, get_connected_devices
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "templates", "index.html")
 
@@ -42,19 +42,29 @@ class ScannerHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            body = json.loads(raw)
+        except Exception:
+            body = {}
+
         if self.path == "/api/scan":
-            length = int(self.headers.get("Content-Length", 0))
-            raw = self.rfile.read(length) if length else b"{}"
-            try:
-                body = json.loads(raw)
-            except Exception:
-                body = {}
             target = str(body.get("target", "127.0.0.1")).strip() or "127.0.0.1"
             try:
                 result = full_scan(target)
                 self.send_json({"ok": True, "data": result})
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, 500)
+
+        elif self.path == "/api/devices":
+            sweep = bool(body.get("sweep", False))
+            try:
+                devices = get_connected_devices(sweep=sweep)
+                self.send_json({"ok": True, "devices": devices})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, 500)
+
         else:
             self.send_error(404)
 

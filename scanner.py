@@ -7,6 +7,7 @@ import subprocess
 import platform
 import time
 import re
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -293,6 +294,117 @@ def get_system_info() -> dict:
     }
 
 
+# ─── Connected devices (ARP + ping sweep) ────────────────────────────────────
+def _get_local_subnet() -> str | None:
+    """Detecta la subred local de la interfaz principal."""
+    try:
+        # Obtener IP local
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+        # Asumir /24
+        parts = local_ip.split(".")
+        return f"{parts[0]}.{parts[1]}.{parts[2]}"
+    except Exception:
+        return None
+
+
+def _ping(ip: str) -> bool:
+    """Ping rápido a una IP."""
+    try:
+        r = subprocess.run(
+            ["ping", "-c", "1", "-W", "1", ip],
+            capture_output=True, timeout=2
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _get_mac_vendor(mac: str) -> str:
+    """Prefijo del fabricante basado en los primeros 3 octetos del MAC."""
+    vendors = {
+        "00:50:56": "VMware", "00:0c:29": "VMware", "00:1c:14": "VMware",
+        "52:54:00": "QEMU/KVM", "b8:27:eb": "Raspberry Pi",
+        "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
+        "00:1a:11": "Google", "f4:f5:d8": "Google",
+        "ac:de:48": "Apple", "00:17:f2": "Apple", "3c:15:c2": "Apple",
+        "00:50:ba": "D-Link", "00:1e:58": "D-Link",
+        "00:23:69": "Cisco", "00:1b:54": "Cisco", "fc:fb:fb": "Cisco",
+        "00:19:5b": "Netgear", "20:e5:2a": "Netgear",
+        "00:90:4c": "Epson", "00:26:b9": "Dell",
+        "00:1d:09": "Dell", "18:03:73": "Dell",
+        "00:21:70": "Samsung", "8c:77:12": "Samsung",
+        "00:22:68": "Hewlett-Packard", "00:25:b3": "HP",
+    }
+    prefix = mac[:8].lower()
+    for k, v in vendors.items():
+        if prefix == k.lower():
+            return v
+    return "Desconocido"
+
+
+def _read_arp_table() -> list:
+    """Lee la tabla ARP del sistema."""
+    devices = []
+    try:
+        # Linux: /proc/net/arp
+        with open("/proc/net/arp") as f:
+            for line in f.readlines()[1:]:
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                ip  = parts[0]
+                mac = parts[3]
+                iface = parts[5] if len(parts) > 5 else "?"
+                if mac == "00:00:00:00:00:00":
+                    continue
+                hostname = "—"
+                try:
+                    hostname = socket.gethostbyaddr(ip)[0]
+                except Exception:
+                    pass
+                devices.append({
+                    "ip": ip,
+                    "mac": mac,
+                    "hostname": hostname,
+                    "vendor": _get_mac_vendor(mac),
+                    "iface": iface,
+                    "reachable": True,
+                })
+    except Exception:
+        pass
+    return devices
+
+
+def get_connected_devices(sweep: bool = False) -> list:
+    """
+    Retorna dispositivos en la red local.
+    1. Lee tabla ARP (instantáneo)
+    2. Opcionalmente hace ping sweep /24 para poblar ARP (más lento)
+    """
+    if sweep:
+        subnet = _get_local_subnet()
+        if subnet:
+            # Ping sweep en paralelo (excluye .0 y .255)
+            ips = [f"{subnet}.{i}" for i in range(1, 255)]
+            with ThreadPoolExecutor(max_workers=60) as ex:
+                list(ex.map(_ping, ips))  # solo para poblar ARP, descartamos resultados
+            time.sleep(0.5)  # Esperar que el kernel actualice ARP
+
+    devices = _read_arp_table()
+
+    # Deduplicar por IP
+    seen = set()
+    unique = []
+    for d in devices:
+        if d["ip"] not in seen:
+            seen.add(d["ip"])
+            unique.append(d)
+
+    return sorted(unique, key=lambda x: list(map(int, x["ip"].split("."))))
+
+
 # ─── Full scan ────────────────────────────────────────────────────────────────
 def full_scan(target: str = "127.0.0.1") -> dict:
     start = time.time()
@@ -304,6 +416,7 @@ def full_scan(target: str = "127.0.0.1") -> dict:
         "ports": scan_ports(target),
         "interfaces": get_network_interfaces(),
         "connections": get_active_connections(),
+        "devices": get_connected_devices(sweep=False),
         "duration_s": 0,
     }
     data["duration_s"] = round(time.time() - start, 2)
@@ -315,6 +428,7 @@ def full_scan(target: str = "127.0.0.1") -> dict:
         "high":     sum(1 for p in open_ports if p["risk"] == "high"),
         "medium":   sum(1 for p in open_ports if p["risk"] == "medium"),
         "low":      sum(1 for p in open_ports if p["risk"] == "low"),
+        "devices":  len(data["devices"]),
     }
     return data
 

@@ -79,6 +79,11 @@
     color: #0d1117;
   }
   .btn-scan:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-devices {
+    background: var(--green);
+    color: #0d1117;
+  }
+  .btn-devices:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-export {
     background: var(--card);
     color: var(--text);
@@ -109,7 +114,7 @@
   /* Summary cards */
   .summary-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 14px;
     margin-bottom: 28px;
   }
@@ -128,6 +133,7 @@
   .num-medium  { color: var(--yellow); }
   .num-fw-on   { color: var(--green); }
   .num-fw-off  { color: var(--red); }
+  .num-devices { color: var(--orange); }
 
   /* Sections */
   .section {
@@ -229,6 +235,39 @@
   .up-dot   { width:9px; height:9px; border-radius:50%; background:var(--green); display:inline-block; }
   .down-dot { width:9px; height:9px; border-radius:50%; background:var(--muted); display:inline-block; }
 
+  /* Device card */
+  .device-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .device-card {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .device-icon {
+    font-size: 1.8rem;
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .device-info { flex: 1; min-width: 0; }
+  .device-hostname { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+  .device-row { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
+  .device-row code { color: var(--accent); font-size: 0.78rem; }
+  .device-vendor { display: inline-block; padding: 1px 6px; background: var(--card); border-radius: 4px; font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+
   /* Info row */
   .info-grid {
     display: grid;
@@ -270,8 +309,12 @@
 <div class="controls">
   <input type="text" id="target" value="127.0.0.1" placeholder="IP objetivo (ej: 127.0.0.1)">
   <button class="btn btn-scan" id="btn-scan" onclick="runScan()">
-    <span class="spinner" id="spinner"></span>
+    <span class="spinner" id="spinner-scan"></span>
     <span id="btn-text">🔍 Escanear</span>
+  </button>
+  <button class="btn btn-devices" id="btn-devices" onclick="scanDevices()">
+    <span class="spinner" id="spinner-dev"></span>
+    <span id="btn-dev-text">📡 Escanear Dispositivos</span>
   </button>
   <button class="btn btn-export" onclick="exportJSON()">📥 Exportar JSON</button>
   <div id="status-bar"></div>
@@ -289,6 +332,14 @@
     🔥 Estado del Firewall <span class="toggle" id="tog-firewall">▼</span>
   </div>
   <div class="section-body" id="body-firewall"></div>
+</div>
+
+<!-- Devices -->
+<div class="section" id="sec-devices" style="display:none">
+  <div class="section-header" onclick="toggleSection('devices')">
+    📱 Dispositivos Conectados <span class="toggle" id="tog-devices">▼</span>
+  </div>
+  <div class="section-body" id="body-devices"></div>
 </div>
 
 <!-- Ports -->
@@ -350,6 +401,20 @@ function badge(risk) {
   return `<span class="badge badge-${risk}">${risk}</span>`;
 }
 
+function deviceIcon(vendor) {
+  const v = vendor.toLowerCase();
+  if (v.includes('apple')) return '🍎';
+  if (v.includes('raspberry')) return '🍓';
+  if (v.includes('vmware') || v.includes('qemu') || v.includes('kvm')) return '🖥️';
+  if (v.includes('cisco')) return '🔧';
+  if (v.includes('d-link') || v.includes('netgear') || v.includes('dlink')) return '📡';
+  if (v.includes('samsung')) return '📱';
+  if (v.includes('epson')) return '🖨️';
+  if (v.includes('dell') || v.includes('hp') || v.includes('hewlett')) return '💻';
+  if (v.includes('google')) return '🏠';
+  return '📟';
+}
+
 function renderSummary(d) {
   const fw = d.firewall;
   const s  = d.summary;
@@ -366,9 +431,9 @@ function renderSummary(d) {
       <div class="lbl">Firewall</div>
     </div>
     <div class="stat-card"><div class="num" style="color:var(--accent)">${d.connections.length}</div><div class="lbl">Conexiones</div></div>
+    <div class="stat-card"><div class="num num-devices">${d.devices ? d.devices.length : 0}</div><div class="lbl">Dispositivos</div></div>
   `;
 
-  // Warn if no firewall
   const wb = document.getElementById('warn-banner');
   if (!fw.active) {
     wb.textContent = '⚠️ Firewall inactivo — tu sistema está expuesto. Activa UFW con: sudo ufw enable';
@@ -395,12 +460,36 @@ function renderFirewall(d) {
   `;
 }
 
+function renderDevices(devices) {
+  document.getElementById('sec-devices').style.display = 'block';
+  if (!devices || !devices.length) {
+    document.getElementById('body-devices').innerHTML =
+      '<div class="empty">No se detectaron dispositivos.<br>Prueba el botón <strong>📡 Escanear Dispositivos</strong> para un descubrimiento profundo (ping sweep).</div>';
+    return;
+  }
+  let html = '<div class="device-grid">';
+  for (const d of devices) {
+    const icon = deviceIcon(d.vendor);
+    html += `<div class="device-card">
+      <div class="device-icon">${icon}</div>
+      <div class="device-info">
+        <div class="device-hostname">${d.hostname !== '—' ? d.hostname : d.ip}</div>
+        <div class="device-row">IP: <code>${d.ip}</code></div>
+        <div class="device-row">MAC: <code>${d.mac}</code></div>
+        <div class="device-row">Interfaz: <code>${d.iface}</code></div>
+        <div class="device-vendor">${d.vendor}</div>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('body-devices').innerHTML = html;
+}
+
 function renderPorts(d) {
   const open   = d.ports.filter(p => p.open);
   const closed = d.ports.filter(p => !p.open);
   let html = `<table>
     <thead><tr><th>Puerto</th><th>Servicio</th><th>Estado</th><th>Riesgo</th></tr></thead><tbody>`;
-  // Open ports first
   for (const p of open) {
     html += `<tr>
       <td><strong>${p.port}</strong></td>
@@ -471,11 +560,12 @@ function renderSystem(d) {
 
 function render(data) {
   lastData = data;
-  ['firewall','ports','conns','ifaces','system'].forEach(s =>
+  ['firewall','ports','devices','conns','ifaces','system'].forEach(s =>
     document.getElementById(`sec-${s}`).style.display = 'block');
 
   renderSummary(data);
   renderFirewall(data);
+  renderDevices(data.devices || []);
   renderPorts(data);
   renderConnections(data);
   renderInterfaces(data);
@@ -509,6 +599,44 @@ async function runScan() {
     btn.classList.remove('scanning');
     document.getElementById('btn-text').textContent = '🔍 Escanear';
   }
+}
+
+async function scanDevices() {
+  const btn = document.getElementById('btn-devices');
+  btn.disabled = true;
+  btn.classList.add('scanning');
+  document.getElementById('btn-dev-text').textContent = 'Descubriendo…';
+  setStatus('Ejecutando ping sweep en la red local (puede tardar ~30s)…');
+
+  try {
+    const resp = await fetch('/api/devices', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sweep: true})
+    });
+    const json = await resp.json();
+    if (!json.ok) throw new Error(json.error || 'Error');
+    renderDevices(json.devices);
+    setStatus(`Se encontraron ${json.devices.length} dispositivos`);
+  } catch(e) {
+    showError(e.message);
+    setStatus('');
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('scanning');
+    document.getElementById('btn-dev-text').textContent = '📡 Escanear Dispositivos';
+  }
+}
+
+function exportJSON() {
+  if (!lastData) { showError('Ejecuta un escaneo primero'); return; }
+  const blob = new Blob([JSON.stringify(lastData, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `scan-${new Date().toISOString().slice(0,19)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // Auto-scan on load
